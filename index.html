@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Image Frame — Converter</title>
+<style>
+ body{font-family:sans-serif;background:#111;color:#eee;text-align:center;
+      margin:0;padding:16px}
+ h2{margin:8px 0 4px}
+ p{color:#aaa;max-width:420px;margin:8px auto}
+ canvas{border:2px solid #444;border-radius:8px;background:#000;
+        width:70vw;max-width:300px;height:auto}
+ .btn{display:block;width:100%;max-width:320px;margin:12px auto;padding:14px;
+      font-size:18px;border:0;border-radius:10px;background:#2a7;color:#fff;
+      text-decoration:none;box-sizing:border-box}
+ .btn:disabled{background:#555}
+ input[type=file]{display:none}
+ ol{max-width:420px;margin:16px auto;text-align:left;color:#ccc}
+ code{background:#222;padding:2px 6px;border-radius:4px}
+</style>
+</head>
+<body>
+<h2>ESP32 Image Frame</h2>
+<p>Converts any photo to the 240&times;240 RGB565 <code>image.bin</code>
+   the ESP32 displays.</p>
+
+<label class="btn" for="file">1. Choose image</label>
+<input type="file" id="file" accept="image/*">
+<canvas id="cv" width="240" height="240"></canvas>
+<button class="btn" id="dl" disabled>2. Download image.bin</button>
+
+<ol>
+  <li>Download <code>image.bin</code> above.</li>
+  <li>In this GitHub repo, replace the existing <code>image.bin</code>
+      (Add file &rarr; Upload files &rarr; Commit).</li>
+  <li>Wait ~1 minute for GitHub Pages to redeploy.</li>
+  <li>The ESP32 picks up the new image automatically on its next poll.</li>
+</ol>
+
+<script>
+const W=240,H=240;
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const fileIn=document.getElementById('file');
+const dlBt=document.getElementById('dl');
+
+fileIn.onchange=()=>{
+  const f=fileIn.files[0];
+  if(!f)return;
+  const img=new Image();
+  img.onload=()=>{
+    const s=Math.max(W/img.width,H/img.height);
+    const w=img.width*s,h=img.height*s;
+    ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+    ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);
+    URL.revokeObjectURL(img.src);
+    dlBt.disabled=false;
+  };
+  img.src=URL.createObjectURL(f);
+};
+
+dlBt.onclick=()=>{
+  const d=ctx.getImageData(0,0,W,H).data;
+  const px=new Uint16Array(W*H);           // RGB565 little-endian
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    px[p]=((d[i]&0xF8)<<8)|((d[i+1]&0xFC)<<3)|(d[i+2]>>3);
+  }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([px.buffer],
+    {type:'application/octet-stream'}));
+  a.download='image.bin';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>
