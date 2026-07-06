@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ESP32 Image Frame — Converter</title>
+<title>ESP32 Image Frame</title>
 <style>
  body{font-family:sans-serif;background:#111;color:#eee;text-align:center;
       margin:0;padding:16px}
@@ -12,37 +12,43 @@
  canvas{border:2px solid #444;border-radius:8px;background:#000;
         width:70vw;max-width:300px;height:auto}
  .btn{display:block;width:100%;max-width:320px;margin:12px auto;padding:14px;
-      font-size:18px;border:0;border-radius:10px;background:#2a7;color:#fff;
-      text-decoration:none;box-sizing:border-box}
+      font-size:18px;border:0;border-radius:10px;background:#2a7;color:#fff}
  .btn:disabled{background:#555}
  input[type=file]{display:none}
- ol{max-width:420px;margin:16px auto;text-align:left;color:#ccc}
- code{background:#222;padding:2px 6px;border-radius:4px}
+ #status{margin-top:10px;min-height:24px;color:#8cf}
+ #conn{font-size:13px;color:#777}
 </style>
 </head>
 <body>
 <h2>ESP32 Image Frame</h2>
-<p>Converts any photo to the 240&times;240 RGB565 <code>image.bin</code>
-   the ESP32 displays.</p>
+<p>Pick a photo, press Send — it appears on the display in a few
+   seconds, from anywhere.</p>
 
 <label class="btn" for="file">1. Choose image</label>
 <input type="file" id="file" accept="image/*">
 <canvas id="cv" width="240" height="240"></canvas>
-<button class="btn" id="dl" disabled>2. Download image.bin</button>
+<button class="btn" id="send" disabled>2. Send to display</button>
+<div id="status">Pick an image to begin</div>
+<div id="conn">connecting to broker...</div>
 
-<ol>
-  <li>Download <code>image.bin</code> above.</li>
-  <li>In this GitHub repo, replace the existing <code>image.bin</code>
-      (Add file &rarr; Upload files &rarr; Commit).</li>
-  <li>Wait ~1 minute for GitHub Pages to redeploy.</li>
-  <li>The ESP32 picks up the new image automatically on its next poll.</li>
-</ol>
-
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
-const W=240,H=240;
+const W=240,H=240,ROWS_PER_CHUNK=8;
+const BROKER='wss://broker.emqx.io:8084/mqtt';
+const TOPIC_BASE='esp32frame/8cfd4910a310/img/';
+
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 const fileIn=document.getElementById('file');
-const dlBt=document.getElementById('dl');
+const sendBt=document.getElementById('send');
+const status=document.getElementById('status');
+const conn=document.getElementById('conn');
+
+let ready=false,haveImage=false;
+const client=mqtt.connect(BROKER,{clean:true,connectTimeout:8000});
+client.on('connect',()=>{ready=true;conn.textContent='broker: connected';
+  sendBt.disabled=!haveImage;});
+client.on('reconnect',()=>{ready=false;conn.textContent='broker: reconnecting...';});
+client.on('error',e=>{conn.textContent='broker error: '+e.message;});
 
 fileIn.onchange=()=>{
   const f=fileIn.files[0];
@@ -54,23 +60,36 @@ fileIn.onchange=()=>{
     ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
     ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);
     URL.revokeObjectURL(img.src);
-    dlBt.disabled=false;
+    haveImage=true;
+    sendBt.disabled=!ready;
+    status.textContent=ready?'Preview ready — press Send':'Waiting for broker...';
   };
+  img.onerror=()=>{status.textContent='Could not open that image';};
   img.src=URL.createObjectURL(f);
 };
 
-dlBt.onclick=()=>{
+sendBt.onclick=async()=>{
+  sendBt.disabled=true;
+  status.textContent='Converting...';
   const d=ctx.getImageData(0,0,W,H).data;
-  const px=new Uint16Array(W*H);           // RGB565 little-endian
-  for(let i=0,p=0;i<d.length;i+=4,p++){
-    px[p]=((d[i]&0xF8)<<8)|((d[i+1]&0xFC)<<3)|(d[i+2]>>3);
+  const px=new Uint8Array(W*H*2);            // RGB565 little-endian bytes
+  for(let i=0,p=0;i<d.length;i+=4,p+=2){
+    const v=((d[i]&0xF8)<<8)|((d[i+1]&0xFC)<<3)|(d[i+2]>>3);
+    px[p]=v&0xFF;px[p+1]=v>>8;
   }
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([px.buffer],
-    {type:'application/octet-stream'}));
-  a.download='image.bin';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  const total=H/ROWS_PER_CHUNK;
+  for(let c=0;c<total;c++){
+    const startRow=c*ROWS_PER_CHUNK;
+    const body=px.subarray(startRow*W*2,(startRow+ROWS_PER_CHUNK)*W*2);
+    const msg=new Uint8Array(2+body.length);
+    msg[0]=startRow&0xFF;msg[1]=startRow>>8;
+    msg.set(body,2);
+    // retained: broker keeps the last image, board reloads it on reboot
+    await client.publishAsync(TOPIC_BASE+c,msg,{qos:1,retain:true});
+    status.textContent='Sending... '+Math.round(((c+1)/total)*100)+'%';
+  }
+  status.textContent='Sent! Display updates in a moment.';
+  sendBt.disabled=false;
 };
 </script>
 </body>

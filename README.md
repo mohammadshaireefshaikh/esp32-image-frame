@@ -1,30 +1,36 @@
 # esp32-image-frame
 
-Remote picture frame for the ESP32-C6-LCD-1.3 (ST7789 240x240).
+Internet picture frame for the ESP32-C6-LCD-1.3 (ST7789 240x240).
 
-The ESP32 polls `image.bin` from this repo's GitHub Pages site every 30
-seconds and redraws the screen whenever the file changes.
+Open the [web page](https://mohammadshaireefshaikh.github.io/esp32-image-frame/),
+pick a photo, press **Send** — it appears on the display within seconds,
+from anywhere in the world.
 
-## How to change the picture
+## How it works
 
-1. Open the [converter page](https://mohammadshaireefshaikh.github.io/esp32-image-frame/)
-   (works on phone or PC).
-2. Pick any photo, download the generated `image.bin`.
-3. Replace `image.bin` in this repo: **Add file → Upload files → Commit**.
-4. Wait ~1 minute for Pages to redeploy. The ESP32 updates itself.
+```
+phone/PC browser --wss--> public MQTT broker (broker.emqx.io) --tcp--> ESP32
+```
 
-## Format
+- The page converts the photo to raw RGB565 240x240 in the browser and
+  publishes it as 30 retained MQTT chunks (8 rows each, 3842 bytes).
+- The ESP32 subscribes and writes each chunk straight to the display.
+- Retained messages mean the board redraws the last image after reboot.
+- Both sides connect outbound only — no port forwarding, works behind
+  any router.
 
-`image.bin` = raw RGB565 pixels, little-endian, 240x240, exactly
-115200 bytes. No header. Row-major, top-left first.
+## Chunk format
+
+Topic `esp32frame/<mac>/img/<n>`, payload:
+`[startRow lo] [startRow hi] [rows * 480 bytes RGB565 little-endian]`
 
 ## Firmware
 
-Arduino sketch `WebImageFrame` (on the controlling PC) polls:
+Arduino sketch `MqttImageFrame` (kept on the controlling PC).
+Libraries: Adafruit GFX, Adafruit ST7789, PubSubClient.
 
-```
-https://mohammadshaireefshaikh.github.io/esp32-image-frame/image.bin
-```
+## Note
 
-using an `If-None-Match` ETag conditional request, so unchanged images
-cost almost no bandwidth.
+The public broker topic is unauthenticated — anyone who knows the topic
+string can push an image to the frame. Fine for a hobby frame; use a
+private broker with credentials if that ever matters.
